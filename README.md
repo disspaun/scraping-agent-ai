@@ -82,7 +82,7 @@ pip install -e .
  - Open the `.env` file and update the API keys and configuration values:
    ```
    LANGSMITH_PROJECT=scrapping-agent
-   LANGSMITH_API_KEY=your_api_key_here=
+   LANGSMITH_API_KEY=your_api_key_here
    ANTHROPIC_API_KEY=your_api_key_here
    FIRECRAWL_API_KEY=your_api_key_here
    URL_LIMIT=10
