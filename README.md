@@ -1,5 +1,3 @@
-# AI Agent with LangGraph, LangSmith, Claude, and Tavily
-
 # 🚀 Scraping Agent AI
 
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue) ![Web Scraping](https://img.shields.io/badge/Web%20Scraping-AI-red) ![Automation](https://img.shields.io/badge/Automation-Smart-green)
