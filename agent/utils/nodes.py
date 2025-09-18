@@ -1,3 +1,4 @@
+from firecrawl.v2.types import ScrapeOptions
 from agent.utils.states import InputState, GraphState, OutputState
 from agent.utils.firecrawl import firecrawl_app
 from agent.utils.llm import llm
@@ -23,16 +24,17 @@ def initialize(state: InputState) -> GraphState:
 @try_except_decorator(identifier=CRAWL)
 def crawl(state: GraphState):
     input_url = state['url']
-    response = firecrawl_app.crawl_url(input_url, {
-        "maxDepth": 0,
-        "scrapeOptions": { "formats": ["links"] }
-    })
+    response = firecrawl_app.crawl(input_url, scrape_options=ScrapeOptions(formats=["links"]))
 
-    response = response.get("data", [])
-    if response:
-        scraped_urls = response[0].get('links', [])
-        valid_urls = [url for url in scraped_urls if is_valid_url(url, input_url)][:int(os.getenv("URL_LIMIT"))]
-        state["url_batches"] = [valid_urls[i:i + int(os.getenv("BATCH_LIMIT"))] for i in range(0, len(valid_urls), int(os.getenv("BATCH_LIMIT")))]
+    if hasattr(response, 'dict'):
+        response_data = response.dict()
+    else:
+        response_data = response if isinstance(response, dict) else {}
+
+    if response_data:
+        scraped_urls = response_data.get('links', []) if isinstance(response_data, dict) else []
+        valid_urls = [url for url in scraped_urls if is_valid_url(url, input_url)][:int(os.getenv("URL_LIMIT", 10))]
+        state["url_batches"] = [valid_urls[i:i + int(os.getenv("BATCH_LIMIT", 5))] for i in range(0, len(valid_urls), int(os.getenv("BATCH_LIMIT", 5)))]
     else:
         state["url_batches"] = []
 
@@ -43,13 +45,16 @@ def scrap(state: GraphState):
     scraped_data_result = []
     if state["url_batches"]:
         current_batch = state["url_batches"][0]
-        batch_scrap_result = firecrawl_app.batch_scrape_urls(current_batch, {
-            "formats": ["markdown"]
-        })
+        batch_scrap_result = firecrawl_app.batch_scrape(current_batch)
 
-        batch_scrap_result = batch_scrap_result.get("data", [])
-        if batch_scrap_result:
-            scraped_data_result = batch_scrap_result
+        if hasattr(batch_scrap_result, 'dict'):
+            batch_scrap_result_data = batch_scrap_result.dict()
+        else:
+            batch_scrap_result_data = batch_scrap_result if isinstance(batch_scrap_result, dict) else {}
+
+        batch_scrap_result_data = batch_scrap_result_data.get("data", []) if isinstance(batch_scrap_result_data, dict) else []
+        if batch_scrap_result_data:
+            scraped_data_result = batch_scrap_result_data
             state["url_batches"].pop(0)
             
     state["scraped_data"] = scraped_data_result
@@ -62,22 +67,22 @@ def format(state: GraphState):
     formatted_data = []
     if scraped_data:
         for content in scraped_data:
-            metadata = content.get("metadata", "")
+            metadata = content.get("metadata", {}) if isinstance(content, dict) else {}
             if not metadata:
                 continue
 
-            url = metadata.get("url", "")
-            markdown = content.get("markdown", "")
+            url = metadata.get("sourceURL", "") if isinstance(metadata, dict) else ""
+            markdown = content.get("markdown", "") if isinstance(content, dict) else ""
             if not markdown:
                 continue
 
             markdown = markdown[:2000] if markdown and len(markdown) > 2000 else markdown
-            response = llm(
+            response = llm.invoke(
                 f"""
                     Analyze the provided information and generate a summarized output using the specified structure. 
         
                     ### Content:
-                    ${markdown}
+                    {markdown}
                     
                     ### Structured JSON Output:
                     {{
@@ -90,10 +95,24 @@ def format(state: GraphState):
             if not response:
                 continue
 
-            formatted_data.append({
-                "url": url,
-                "response": json.loads(response.content)
-            })
+            try:
+                if hasattr(response, 'content'):
+                    response_content = response.content
+                elif hasattr(response, 'dict'):
+                    response_dict = response.dict()
+                    response_content = json.dumps(response_dict)
+                else:
+                    response_content = str(response)
+                
+                formatted_data.append({
+                    "url": url,
+                    "response": json.loads(response_content) if isinstance(response_content, str) else response_content
+                })
+            except (json.JSONDecodeError, TypeError):
+                formatted_data.append({
+                    "url": url,
+                    "response": response
+                })
         
     state["formatted_data"] = formatted_data
     return state
@@ -112,14 +131,13 @@ def save(state: GraphState) -> OutputState:
         with open("scraped_data.json", "w") as f:
             json.dump(output, f, indent=4)
         
-        return { "result": output }
+        return OutputState(result=json.dumps(output))
 
     print("Scrapping completed, data saved in scraped_data.json")
-    return state
+    return OutputState(result="Scrapping completed, data saved in scraped_data.json")
 
-def error_handler(state: GraphState):
+def error_handler(state: GraphState) -> GraphState:
     state["retry_count"] += 1
     state["error"] = ""
 
     return state
-        
